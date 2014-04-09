@@ -11,6 +11,7 @@
  *
  * - path:             the only required property. It must point to a valid, writable directory.
  * - prefix:           a thumbnail-only property. If set the filename of the thumbnail will be prefixed with the value.
+ * - suffix:           a thumbnail-only property. If set the filename of the thumbnail will be suffixed with the value, useful for @2X retina names.
  * - transformations:  desired transformations to apply to the image (resize, crop, custom...)
  * - quality:          the desired quality of the saved image between 0 and 100.
  *
@@ -21,6 +22,7 @@
  *         array(
  *             'path' => 'upload/images/thumbs/',			  // where to save the thumbnails
  * 			   'prefix' => 'thumb_',						  // prefix for the thumbnail filename
+ *             'suffix' => '@2X',						      // suffix for the thumbnail filename
  *             'transformations' => array(					  // define transformations, refer to the Image module methods
  *                 'resize' => array(500, 500, Image::AUTO),  // width, height, master dimension
  *                 'crop'   => array(100, 100, NULL, NULL),	  // width, height, offset_x, offset_y
@@ -101,19 +103,25 @@ abstract class Jelly_Core_Field_Image extends Jelly_Field_File {
 				$thumbnail['prefix'] = NULL;
 			}
 
+            if ( ! isset($thumbnail['suffix']))
+            {
+                // Force the thumbnail suffix to NULL if not set
+                $thumbnail['suffix'] = NULL;
+            }
+
 			if ( ! isset($thumbnail['transformations']))
 			{
 				// Create an empty array for thumbnail tranformations if not set
 				$thumbnail['transformations'] = array();
 			}
 
-			if ( ! $thumbnail['prefix'] AND ( ! isset($thumbnail['path']) OR $thumbnail['path'] === $this->path))
-			{
-				// If no prefix is set and the thumbnail path is the same as the original path throw exception
-				throw new Kohana_Exception(':class must have a different `path` or a defined `prefix` property for thumbnails', array(
-					':class' => get_class($this),
-				));
-			}
+            if ((! $thumbnail['prefix'] AND ! $thumbnail['suffix'])  AND ( ! isset($thumbnail['path']) OR $thumbnail['path'] === $this->path))
+            {
+                // If no prefix or suffix is set and the thumbnail path is the same as the original path throw exception
+                throw new Kohana_Exception(':class must have a different `path` or a defined `prefix or suffix` property for thumbnails', array(
+                    ':class' => get_class($this),
+                ));
+            }
 
 			// Merge back in
 			$this->thumbnails[$key] = $thumbnail;
@@ -154,7 +162,11 @@ abstract class Jelly_Core_Field_Image extends Jelly_Field_File {
 		foreach ($thumbnails as $thumbnail)
 		{
 			// Set file name
-			$file = $thumbnail['prefix'].$model->$field;
+
+            $extension = pathinfo($model->$field, PATHINFO_EXTENSION);
+            $name = pathinfo($model->$field, PATHINFO_FILENAME);
+
+            $file = $thumbnail['prefix'].$name.$thumbnail['suffix'].'.'.$extension;
 
 			if (isset($thumbnail['path']))
 			{
@@ -211,19 +223,43 @@ abstract class Jelly_Core_Field_Image extends Jelly_Field_File {
 				}
 
 				// Set the destination
-				$destination = $thumbnail['path'].$thumbnail['prefix'].$filename;
+
+                $extension = pathinfo($filename, PATHINFO_EXTENSION);
+                $name = pathinfo($filename, PATHINFO_FILENAME);
+
+                $destination = $thumbnail['path'].$thumbnail['prefix'].$name.$thumbnail['suffix'].'.'.$extension;
 
 				// Delete old file if necessary
-				$this->_delete_old_file($thumbnail['prefix'].$model->original($field), $thumbnail['path']);
 
-				// Set thumb
-				$thumb = Image::factory($source, $this->driver);
+                $original = trim($model->original($field));
 
-				// Process thumbnail transformations
-				$thumb = $this->_transform($thumb, $thumbnail['transformations']);
+                if(!empty($original)){
 
-				// Save the thumbnail
-				$thumb->save($destination, $thumbnail['quality']);
+                    $original_extension = pathinfo($original, PATHINFO_EXTENSION);
+                    $original_name = pathinfo($original, PATHINFO_FILENAME);
+
+				    $this->_delete_old_file($thumbnail['prefix'].$original_name.$thumbnail['suffix'].'.'.$original_extension, $thumbnail['path']);
+                }
+
+                // If the thumbnail has no transforms at 100 quality, just copy original this way we dont double compress and keeps filesize down
+
+                if(empty($thumbnail['transformations']) && ($thumbnail['quality'] == 100)){
+
+                    copy($source,$destination);
+
+                }else{
+
+                    // Set thumb
+                    $thumb = Image::factory($source, $this->driver);
+
+                    // Process thumbnail transformations
+                    $thumb = $this->_transform($thumb, $thumbnail['transformations']);
+
+                    // Save the thumbnail
+                    $thumb->save($destination, $thumbnail['quality']);
+
+                }
+
 			}
 		}
 
